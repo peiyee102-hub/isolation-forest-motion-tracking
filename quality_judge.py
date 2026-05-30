@@ -70,9 +70,9 @@ def calibrate(reps: List[RepFeatures],
         target_sparc    = float(np.median(sparc_vals)),      # threshold: must be ≤ this (more negative)
         max_comp_mean   = float(np.median(comp_vals)  + np.std(comp_vals)),
         max_upper_rom_y = float(np.median(ury_vals)   + np.std(ury_vals)),
-        max_jerk        = float(np.percentile(jerk_vals, 90)),
-        min_duration_s  = float(np.percentile(dur_vals, 10)),
-        max_duration_s  = float(np.percentile(dur_vals, 90) * 2),  # 2× for fatigue tolerance
+        max_jerk        = float(np.percentile(jerk_vals, 75)),
+        min_duration_s  = float(np.percentile(dur_vals, 25)),
+        max_duration_s  = float(np.percentile(dur_vals, 75) * 2.0),
         n_calib_reps    = len(reps),
         raw_reps        = reps,
     )
@@ -211,7 +211,7 @@ _RULES: List[Tuple[str, callable, str]] = [
     ),
     (
         "tremor",
-        lambda f, c: (f.mean_jerk > c.max_jerk and f.peak_velocity < 300),
+        lambda f, c: f.mean_jerk > c.max_jerk,
         "Movement is unsteady — try to move slowly and smoothly."
     ),
     (
@@ -221,7 +221,7 @@ _RULES: List[Tuple[str, callable, str]] = [
     ),
     (
         "unsmooth",
-        lambda f, c: (f.sparc < (c.target_sparc * 1.5) and f.mean_jerk > c.max_jerk),
+        lambda f, c: (f.sparc > (c.target_sparc * 0.5) and f.mean_jerk > c.max_jerk),
         "Movement is jerky — aim for a smooth, controlled arc."
     ),
 ]
@@ -281,7 +281,7 @@ def score_rep(features: RepFeatures,
     # Composite quality score (weighted average of key dimensions)
     scores = {
         "rom":       _dimension_score(features.rom, calib.target_rom,       "higher_is_better"),
-        "smoothness":_dimension_score(-features.sparc, -calib.target_sparc, "lower_is_better"),
+        "smoothness":_dimension_score(-features.sparc, -calib.target_sparc, "higher_is_better"),
         "comp":      _dimension_score(features.comp_mean, calib.max_comp_mean, "lower_is_better"),
         "jerk":      _dimension_score(features.mean_jerk, calib.max_jerk,   "lower_is_better"),
         "swing":     _dimension_score(features.upper_rom_y, calib.max_upper_rom_y, "lower_is_better"),
