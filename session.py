@@ -168,22 +168,23 @@ class RehabSession:
         # 2. APPLY TOLERANCE BUFFERS
         self._calib.target_rom *= 0.85 
         
-        # Relax Smoothness: Even more lenient for better detection
-        self._calib.target_sparc *= 1.50 
+        # Smoothness: keep calibration median as quality reference.
+        # Do NOT inflate target_sparc here — that breaks quality scoring.
+        # The rule engine uses target_sparc directly; quality uses it too.
         
         self._calib.max_comp_mean *= 1.5
         self._calib.max_upper_rom_y *= 1.5
 
-        # 3. FIX SPEED CHEATING: Set range so wide it never fails
-        # We set min to 0.1s and max to 60s to effectively disable the check
-        self._calib.min_duration_s   = max(self._calib.min_duration_s * 0.8, 0.5)
-        self._calib.max_duration_s   = min(self._calib.max_duration_s * 1.5, 60.0)
+        # 3. Speed-cheating threshold: 10th percentile × 0.80
+        # Catches only genuinely fast reps, not normal variation.
+        calib_durs = np.array([r.duration_s for r in self._calib_reps])
+        self._calib.min_duration_s = max(float(np.percentile(calib_durs, 10) * 0.80), 0.5)
+        self._calib.max_duration_s = min(float(np.percentile(calib_durs, 90) * 2.0), 60.0)
 
         # 4. SAFETY LIMITS
-        # Lower this to -20.0 or -25.0 if it's still failing your reps
         self._calib.target_sparc = max(self._calib.target_sparc, -40.0)
-        # More robust tremor threshold: use max calibration jerk + 30% margin
-        # instead of noisy 90th percentile with only 5 reps
+        # Tremor threshold: max calibration jerk × 1.3 margin.
+        # Catches reps that are noticeably jerkier than the patient's own baseline.
         calib_jerks = np.array([r.mean_jerk for r in self._calib_reps])
         self._calib.max_jerk = max(float(np.max(calib_jerks) * 1.3), 50.0)
 
