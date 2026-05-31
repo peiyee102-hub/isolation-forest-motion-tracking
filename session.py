@@ -222,14 +222,20 @@ def evaluate_offline(calib_path: str,
     if verbose:
         print(f"\n=== Test file: {test_path} ({len(scores)} reps) ===")
         for i, s in enumerate(scores):
-            status = "PASS ✓" if s.passed else f"FAIL ✗ {s.faults}"
+            if s.status == "PASS":
+                status = f"PASS ✓"
+            elif s.status == "WARN":
+                status = f"WARN ⚠"
+            else:
+                status = f"FAIL ✗ {s.faults}"
             print(f"  Rep {i+1}: Q={s.quality_score:.2f}  {status}")
             for msg in get_feedback(s):
                 print(f"         ↳ {msg}")
 
     summ = session.summary()
     if verbose:
-        print(f"\nPass rate: {summ['pass_rate']*100:.0f}%  Mean quality: {summ['mean_quality']:.2f}")
+        print(f"\nPass: {summ.get('passed_reps',0)}  Warn: {summ.get('warned_reps',0)}  Fail: {summ.get('failed_reps',0)}")
+        print(f"Pass rate: {summ['pass_rate']*100:.0f}%  Warn rate: {summ.get('warn_rate',0)*100:.0f}%  Mean quality: {summ['mean_quality']:.2f}")
         print(f"Most common fault: {summ.get('most_common_fault','none')}")
 
     return {"calibration": calib.summary, "session": summ, "rep_scores": scores}
