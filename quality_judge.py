@@ -41,6 +41,11 @@ except ImportError:
 
 CALIB_QUALITY_FRACTION = 0.90   # target = 90% of calibration quality
 
+# Isolation Forest score normalization (from training_summary.json)
+# decision_function range: min=-0.1664  max=0.1803  threshold=0.0197
+IF_SCORE_MIN = -0.1664
+IF_SCORE_MAX = 0.1803
+
 
 def calibrate(reps: List[RepFeatures],
               quality_fraction: float = CALIB_QUALITY_FRACTION) -> CalibrationResult:
@@ -269,31 +274,49 @@ def score_rep(features: RepFeatures,
         if triggered:
             faults.append(fault_name)
 
-    # Isolation Forest gate — secondary (reduces quality score but NEVER fails the rep)
-    if_penalty = 0.0
+    # Isolation Forest gate — proportional weighted dimension (NOT a flat penalty)
+    anomaly_norm = 1.0   # default = perfectly normal if gate inactive
     if gate is not None:
         if_score = gate.score(features)
         details['anomaly_score'] = round(if_score, 3)
-        if gate.is_anomaly(features):
-            # Quality penalty only — rule engine remains the primary pass/fail judge
-            if_penalty = 0.20
-    
+        # Normalize decision_function to 0–1 where 1 = perfectly normal
+        raw_range = IF_SCORE_MAX - IF_SCORE_MIN
+        if raw_range > 0:
+            anomaly_norm = float(np.clip((if_score - IF_SCORE_MIN) / raw_range, 0.0, 1.0))
+        details['anomaly_norm'] = round(anomaly_norm, 3)
+    else:
+        details['anomaly_norm'] = 1.0
+
     # Composite quality score (weighted average of key dimensions)
+    # Anomaly is now a proportional dimension, not a flat penalty
     scores = {
         "rom":       _dimension_score(features.rom, calib.target_rom,       "higher_is_better"),
         "smoothness":_dimension_score(-features.sparc, -calib.target_sparc, "higher_is_better"),
         "comp":      _dimension_score(features.comp_mean, calib.max_comp_mean, "lower_is_better"),
         "jerk":      _dimension_score(features.mean_jerk, calib.max_jerk,   "lower_is_better"),
         "swing":     _dimension_score(features.upper_rom_y, calib.max_upper_rom_y, "lower_is_better"),
+        "anomaly":   anomaly_norm,   # proportional: higher = more normal
     }
-    weights = {"rom": 0.35, "smoothness": 0.25, "comp": 0.15, "jerk": 0.15, "swing": 0.10}
+    weights = {"rom": 0.30, "smoothness": 0.25, "comp": 0.15, "jerk": 0.15, "swing": 0.10, "anomaly": 0.10}
     quality = sum(scores[k] * weights[k] for k in weights)
-    quality = float(np.clip(quality - if_penalty, 0.0, 1.0))
+    quality = float(np.clip(quality, 0.0, 1.0))
 
     details.update({f"score_{k}": round(v, 3) for k, v in scores.items()})
     details['quality_score'] = round(quality, 3)
 
-    passed = len(faults) == 0
+    # 3-tier status
+    has_faults = len(faults) > 0
+    is_anomaly = gate is not None and gate.is_anomaly(features)
+
+    if has_faults:
+        status = "FAIL"
+    elif is_anomaly:
+        status = "WARN"
+    else:
+        status = "PASS"
+
+    # Backward compatibility: passed=True for both PASS and WARN
+    passed = not has_faults
 
     return RepScore(
         passed=passed,
@@ -301,19 +324,24 @@ def score_rep(features: RepFeatures,
         faults=faults,
         features=features,
         details=details,
+        status=status,
     )
 
 
 def get_feedback(score: RepScore) -> List[str]:
-    """Return human-readable feedback strings for detected faults."""
+    """Return human-readable feedback strings for detected faults and warnings."""
     messages = []
     fault_map = {name: msg for name, _, msg in _RULES}
     for fault in score.faults:
         msg = fault_map.get(fault)
         if msg:
             messages.append(msg)
-        elif fault == 'statistical_anomaly':
-            messages.append("Movement pattern is unusual — check your position and try again.")
+    # WARN tier: no rule faults, but anomaly gate flagged unusual pattern
+    if score.status == "WARN":
+        messages.append(
+            "Movement pattern looks unusual — your rep met all measurable thresholds, "
+            "but check your form and position."
+        )
     return messages
 
 
@@ -330,10 +358,19 @@ def session_summary(scores: List[RepScore]) -> dict:
         for f in s.faults:
             fault_counter[f] = fault_counter.get(f, 0) + 1
 
+    total = len(scores)
+    n_pass = sum(1 for s in scores if s.status == "PASS")
+    n_warn = sum(1 for s in scores if s.status == "WARN")
+    n_fail = sum(1 for s in scores if s.status == "FAIL")
+
     return {
-        "total_reps": len(scores),
-        "passed_reps": sum(1 for s in scores if s.passed),
-        "pass_rate": round(sum(1 for s in scores if s.passed) / len(scores), 2),
+        "total_reps": total,
+        "passed_reps": n_pass + n_warn,   # backward-compatible: completed reps
+        "pass_rate": round((n_pass + n_warn) / total, 2) if total else 0.0,
+        "warned_reps": n_warn,
+        "warn_rate": round(n_warn / total, 2) if total else 0.0,
+        "failed_reps": n_fail,
+        "fail_rate": round(n_fail / total, 2) if total else 0.0,
         "mean_quality": round(float(np.mean(qualities)), 3),
         "min_quality":  round(float(np.min(qualities)), 3),
         "max_quality":  round(float(np.max(qualities)), 3),
