@@ -73,11 +73,12 @@ class CalibrationResult:
 @dataclass
 class RepScore:
     """Outcome of judging a single rep."""
-    passed: bool
+    passed: bool                # backward-compatible: True for PASS and WARN
     quality_score: float        # 0–1  (1 = perfect)
     faults: List[str]           # list of detected fault names
     features: RepFeatures
     details: dict               # per-dimension pass/fail + margin
+    status: str = ""            # "PASS" | "WARN" | "FAIL"
 
 
 # ──────────────────────────────────────────────
