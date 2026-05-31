@@ -296,7 +296,7 @@ def run_calibration(ser, session, logger):
             if angle > live_max: live_max = angle
             # Compact single-line display to avoid terminal wrapping
             t_str = time_bar(elapsed, CALIB_DURATION, width=20)
-            a_str = angle_bar(angle, 0, 160, width=20)
+            a_str = angle_bar(angle, 0, 130, width=20)
             sys.stdout.write(
                 f"\r  {t_str}  {a_str}  Peak:{live_max:5.1f}°"
             )
@@ -378,7 +378,7 @@ def main():
 
     try:
         with ser:
-            resting_offset, calib_max = run_calibration(ser, session, logger)
+            rest_rel, calib_max = run_calibration(ser, session, logger)
 
             print("  🏋  START YOUR REHAB SESSION!")
             print("  (Ctrl+C to end and see summary)\n")
@@ -411,7 +411,7 @@ def main():
                     
                     # Compact single-line display to avoid terminal wrapping
                     t_str = time_bar(elapsed, REP_WINDOW_SEC, width=20)
-                    a_str = angle_bar(angle, 0, 160, width=20)
+                    a_str = angle_bar(angle, 0, calib_max, width=20)
                     sys.stdout.write(f"\r  {t_str}  {a_str}")
                     sys.stdout.flush()
                 print() # New line after timer ends
@@ -446,12 +446,17 @@ def main():
                 if anomaly_score is not None:
                     status = "NORMAL" if anomaly_score >= 0.0197 else "ANOMALOUS"
                     print(f"  │  Anomaly Score : {anomaly_score:.3f}  ({status})")
-                
+
                 # Show SPARC (smoothness metric)
                 print(f"  │  SPARC         : {features.sparc:.1f}  (less negative = smoother)")
-                
-                if score.passed:
+
+                # 3-tier result display
+                if score.status == "PASS":
                     print(f"  │  Result        : \033[92m✅ PASS\033[0m")
+                elif score.status == "WARN":
+                    print(f"  │  Result        : \033[93m⚠️  WARN\033[0m — pattern unusual")
+                    for msg in feedback:
+                        print(f"  │  → {msg}")
                 else:
                     print(f"  │  Result        : \033[91m❌ FAIL\033[0m — {score.faults}")
                     for msg in feedback:
@@ -471,7 +476,9 @@ def main():
 
             print(f"\n  ══ SESSION SUMMARY ══════════════════════════")
             print(f"  Total reps    : {summary['total_reps']}")
-            print(f"  Passed        : {summary['passed_reps']}  ({pass_rate*100:.0f}%)")
+            print(f"  Passed        : {summary.get('passed_reps',0)}  ({pass_rate*100:.0f}%)")
+            print(f"  Warned        : {summary.get('warned_reps',0)}  ({summary.get('warn_rate',0)*100:.0f}%)")
+            print(f"  Failed        : {summary.get('failed_reps',0)}  ({summary.get('fail_rate',0)*100:.0f}%)")
             print(f"  Mean quality  : {mean_quality:.2f}")
             if fault_counts:
                 print(f"  Fault breakdown:")
